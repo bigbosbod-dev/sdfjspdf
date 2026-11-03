@@ -227,3 +227,20 @@ body.sheet-open .tabbar { display: none; }
   .sheet { border-radius: 26px; bottom: 20px; }
   .sheet.full { top: 20px; bottom: 20px; border-radius: 26px; }
 }
+
+/* ---------- add sheet: search / barcode ---------- */
+.pick5 { grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
+.pick5 button { padding: 14px 4px; font-size: 13px; border-radius: 16px; }
+.pick5 svg { width: 24px; height: 24px; }
+.ai-head { margin: 0 2px 8px; }
+.link { color: #555; text-decoration: underline; margin: 2px 2px 10px; }
+#hint { margin-bottom: 10px; }
+.search-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.search-row .input { flex: 1; }
+.icon-btn.big { width: 48px; height: 48px; border-radius: 14px; flex: none; }
+.icon-btn.big svg { width: 24px; height: 24px; stroke-width: 1.8; }
+.list-head { margin: 14px 2px 0; }
+#food-list .entry .time { white-space: nowrap; }
+.scan-box { position: relative; aspect-ratio: 4 / 3; background: #111; border-radius: 18px; overflow: hidden; margin-bottom: 8px; }
+.scan-box video { width: 100%; height: 100%; object-fit: cover; }
+.scan-line { position: absolute; left: 12%; right: 12%; top: 50%; height: 2px; background: #ff5252; box-shadow: 0 0 10px #ff5252; }

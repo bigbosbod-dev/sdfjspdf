@@ -2,6 +2,8 @@
 // All data stays in this browser's localStorage. No server.
 
 import { analyzeMeal } from "./ai.js";
+import { FOODS, UNIT_EN } from "./foods.js";
+import { startScanner, lookupProduct } from "./barcode.js";
 
 /* ============================== i18n ============================== */
 const STR = {
@@ -38,6 +40,15 @@ const STR = {
     storageFull: "พื้นที่เก็บข้อมูลเต็ม ลองสำรองแล้วลบข้อมูลเก่า", settingsSaved: "บันทึกการตั้งค่าแล้ว",
     date: "วันที่", time: "เวลา", weightSaved: "บันทึกน้ำหนักแล้ว", errorPrefix: "เกิดข้อผิดพลาด: ",
     lose: "ลด", gain: "เพิ่ม", maintain: "คงที่",
+    searchPh: "ค้นหาเมนู เช่น กะเพรา, ชาไทย, ส้มตำ", recent: "ล่าสุด", results: "ผลการค้นหา", noResults: "ไม่พบเมนูนี้ ลองสร้างเองหรือใช้ AI",
+    scanBarcode: "บาร์โค้ด", snapLabel: "ฉลาก", askAi: "พิมพ์ให้ AI", createOwn: "สร้างเอง", aiTools: "ให้ AI คำนวณ (ฟรีด้วย Gemini)",
+    scanTitle: "สแกนบาร์โค้ด", scanHelp: "เล็งกล้องไปที่บาร์โค้ด", enterCode: "หรือพิมพ์เลขบาร์โค้ด", lookup: "ค้นหา",
+    looking: "กำลังค้นหาสินค้า…", notFound: "ไม่พบสินค้านี้ในฐานข้อมูล ลองถ่ายฉลากให้ AI อ่านแทน", noNutrition: "สินค้านี้ยังไม่มีข้อมูลโภชนาการ ลองถ่ายฉลากแทน",
+    camError: "เปิดกล้องไม่ได้ พิมพ์เลขบาร์โค้ดแทนได้", perServing: "ค่าต่อ", fromOff: "ข้อมูลจาก Open Food Facts",
+    newFood: "เมนูใหม่", needName: "ใส่ชื่ออาหารก่อน", aiProvider: "AI สำหรับวิเคราะห์รูป",
+    gemini: "Gemini (ฟรี)", claude: "Claude (เสียเงิน)", geminiKey: "Gemini API key",
+    geminiHelp: "สมัครฟรีที่ aistudio.google.com/apikey (ไม่ต้องใส่บัตร) มีโควต้าใช้ฟรีต่อวัน ข้อมูลจากการใช้แบบฟรี Google อาจนำไปปรับปรุงบริการ",
+    needAiKey: "ใส่ API key ในหน้า \"ฉัน\" ก่อนนะ (Gemini ฟรี) หรือใช้ค้นหาเมนูแทน", hintToggle: "+ ใส่คำอธิบายเพิ่มให้ AI",
   },
   en: {
     appName: "KinDee", tabHome: "Home", tabProgress: "Progress", tabProfile: "Profile",
@@ -72,6 +83,15 @@ const STR = {
     storageFull: "Storage is full. Back up and delete old data.", settingsSaved: "Settings saved",
     date: "Date", time: "Time", weightSaved: "Weight saved", errorPrefix: "Error: ",
     lose: "lose", gain: "gain", maintain: "maintain",
+    searchPh: "Search food, e.g. basil, thai tea, papaya salad", recent: "Recent", results: "Results", noResults: "Not found. Create it or use AI.",
+    scanBarcode: "Barcode", snapLabel: "Label", askAi: "Describe to AI", createOwn: "Create", aiTools: "Let AI calculate (free with Gemini)",
+    scanTitle: "Scan barcode", scanHelp: "Point the camera at a barcode", enterCode: "Or type the barcode number", lookup: "Look up",
+    looking: "Looking up product…", notFound: "Product not found. Try snapping the nutrition label instead.", noNutrition: "No nutrition data for this product. Try snapping the label.",
+    camError: "Can't open the camera. Type the number instead.", perServing: "Per", fromOff: "Data from Open Food Facts",
+    newFood: "New food", needName: "Enter a food name first", aiProvider: "AI for photo analysis",
+    gemini: "Gemini (free)", claude: "Claude (paid)", geminiKey: "Gemini API key",
+    geminiHelp: "Get one free at aistudio.google.com/apikey (no card needed). Free daily quota; Google may use free-tier data to improve its products.",
+    needAiKey: "Add an API key in Profile first (Gemini is free), or search the food list", hintToggle: "+ Add notes for the AI",
   },
 };
 const t = (k) => (STR[settings.lang] || STR.th)[k] ?? STR.th[k] ?? k;
@@ -87,7 +107,7 @@ const store = {
 
 function defaultSettings() {
   return {
-    lang: "th", apiKey: "",
+    lang: "th", apiKey: "", provider: "gemini", geminiKey: "",
     body: { sex: "male", age: 30, height: 170, weight: 70, goalWeight: 65, activity: 1.375, pace: 0.5 },
     goals: null, // filled from body on first run
   };
@@ -95,6 +115,9 @@ function defaultSettings() {
 
 let settings = store.get("settings", null) || defaultSettings();
 if (!settings.goals) settings.goals = computeGoals(settings.body);
+if (!settings.provider) settings.provider = "gemini";
+if (settings.geminiKey === undefined) settings.geminiKey = "";
+const aiKey = () => (settings.provider === "claude" ? settings.apiKey : settings.geminiKey);
 let entries = store.get("entries", []);
 let weights = store.get("weights", []);
 const state = { tab: "home", date: ymd(new Date()) };
@@ -193,6 +216,8 @@ const IC = {
   camera: `<svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>`,
   image: `<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-9 9"/></svg>`,
   text: `<svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>`,
+  label: `<svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>`,
+  barcode: `<svg viewBox="0 0 24 24"><path d="M4 6v12M7 6v12M10 6v12M14 6v12M16 6v12M20 6v12"/></svg>`,
   pencil: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20l4-1 11-11-3-3L5 16z"/></svg>`,
   arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>`,
   logo: `<svg viewBox="0 0 64 64"><circle cx="32" cy="34" r="22" fill="#2a2a2c"/><path d="M32 12c4-6 10-7 14-5-2 5-7 8-14 5Z" fill="#2f9e5b"/><circle cx="32" cy="34" r="12" fill="none" stroke="#fff" stroke-width="4" stroke-dasharray="56 80" stroke-linecap="round" transform="rotate(-90 32 34)"/></svg>`,
@@ -384,9 +409,16 @@ function viewProfile() {
       <div class="seg" id="lang-seg"><button type="button" data-lang="th" class="${settings.lang === "th" ? "on" : ""}">ภาษาไทย</button><button type="button" data-lang="en" class="${settings.lang === "en" ? "on" : ""}">English</button></div>
     </div>
     <div class="card">
-      <h3>${t("apiKey")}</h3>
-      <input class="input" type="password" name="apiKey" value="${esc(settings.apiKey)}" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
-      <p class="small muted" style="margin:8px 2px 0">${t("apiKeyHelp")}</p>
+      <h3>${t("aiProvider")}</h3>
+      <div class="seg" id="prov-seg" style="margin-bottom:12px"><button type="button" data-prov="gemini" class="${settings.provider === "gemini" ? "on" : ""}">${t("gemini")}</button><button type="button" data-prov="claude" class="${settings.provider === "claude" ? "on" : ""}">${t("claude")}</button></div>
+      <div ${settings.provider === "gemini" ? "" : "hidden"}>
+        <label class="field"><span>${t("geminiKey")}</span><input class="input" type="password" name="geminiKey" value="${esc(settings.geminiKey)}" placeholder="AIza..." autocomplete="off" spellcheck="false" /></label>
+        <p class="small muted" style="margin:0 2px">${t("geminiHelp")} <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></p>
+      </div>
+      <div ${settings.provider === "claude" ? "" : "hidden"}>
+        <label class="field"><span>${t("apiKey")}</span><input class="input" type="password" name="apiKey" value="${esc(settings.apiKey)}" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" /></label>
+        <p class="small muted" style="margin:0 2px">${t("apiKeyHelp")}</p>
+      </div>
     </div>
     <div class="card">
       <h3>${t("body")}</h3>
@@ -429,6 +461,7 @@ function readProfileForm() {
   const f = $("#profile-form"); if (!f) return;
   const n = (k) => Number(f.elements[k].value);
   settings.apiKey = f.elements.apiKey.value.trim();
+  settings.geminiKey = f.elements.geminiKey.value.trim();
   Object.assign(settings.body, {
     age: n("age") || settings.body.age, height: n("height") || settings.body.height,
     weight: n("weight") || settings.body.weight, goalWeight: n("goalWeight") || settings.body.goalWeight,
@@ -458,23 +491,132 @@ function closeSheet() {
 }
 
 let pendingHint = "";
+let pendingMode = "meal";
+const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, "");
+
+// Built-in list + everything you've logged before (latest version wins), as per-serving drafts.
+function foodIndex() {
+  const seen = new Map();
+  const past = [...entries].sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  for (const e of past) {
+    const k = norm(e.name);
+    if (!seen.has(k)) seen.set(k, { name: e.name, nameEn: e.nameEn, kcal: e.kcal, protein: e.protein, carb: e.carb, fat: e.fat, low: e.low, high: e.high, items: e.items, photo: e.photo, unit: "", past: true });
+  }
+  const list = [...seen.values()];
+  for (const [name, nameEn, kcal, protein, carb, fat, unit] of FOODS) {
+    if (!seen.has(norm(name))) list.push({ name, nameEn, kcal, protein, carb, fat, unit, past: false });
+  }
+  return list;
+}
+
+function searchFoods(q) {
+  const idx = foodIndex();
+  if (!q) return idx.filter((f) => f.past).slice(0, 12);
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const scored = [];
+  for (const f of idx) {
+    const hay = norm(f.name) + " " + (f.nameEn || "").toLowerCase();
+    if (!words.every((w) => hay.includes(w))) continue;
+    const starts = norm(f.name).startsWith(norm(q)) || (f.nameEn || "").toLowerCase().startsWith(q.toLowerCase());
+    scored.push([(f.past ? 2 : 0) + (starts ? 1 : 0) - f.name.length / 100, f]);
+  }
+  return scored.sort((a, b) => b[0] - a[0]).slice(0, 40).map((x) => x[1]);
+}
+
+function foodRow(f, i) {
+  const name = settings.lang === "en" ? f.nameEn || f.name : f.name;
+  const sub = [settings.lang === "en" ? (f.nameEn ? f.name : "") : f.nameEn, settings.lang === "en" ? UNIT_EN[f.unit] || f.unit : f.unit].filter(Boolean).join(" · ");
+  return `<button class="entry" data-food="${i}">
+    ${f.photo ? `<img class="thumb" src="${f.photo}" alt="">` : `<div class="thumb">${IC.meal}</div>`}
+    <div class="info"><div class="name">${esc(name)}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ""}
+      <div class="mac num"><span><i style="background:var(--protein)"></i>${fmt(f.protein)}${t("g")}</span><span><i style="background:var(--carb)"></i>${fmt(f.carb)}${t("g")}</span><span><i style="background:var(--fat)"></i>${fmt(f.fat)}${t("g")}</span></div></div>
+    <span class="time num"><b>${fmt(f.kcal)}</b> ${t("kcal")}</span></button>`;
+}
+
+function newDraft(extra = {}) {
+  const time = hhmm();
+  return { id: null, date: state.date, time, meal: mealForTime(time), servings: 1, photo: null, name: "", nameEn: "",
+    kcal: 0, low: 0, high: 0, protein: 0, carb: 0, fat: 0, items: [], note: "", ai: null, ...extra };
+}
+
 function openAddSheet() {
   const s = openSheet(`
     <div class="sheet-head"><h2>${t("addFood")}</h2><button class="icon-btn" data-close>${IC.close}</button></div>
-    <div class="pick">
+    <div class="ai-head small muted">${t("aiTools")}</div>
+    <div class="pick pick5">
       <button data-src="camera">${IC.camera}${t("takePhoto")}</button>
       <button data-src="gallery">${IC.image}${t("fromGallery")}</button>
-      <button data-src="text">${IC.text}${t("typeIt")}</button>
+      <button data-src="label">${IC.label}${t("snapLabel")}</button>
+      <button data-src="text">${IC.text}${t("askAi")}</button>
     </div>
-    <textarea class="input" id="hint" rows="2" placeholder="${esc(t("hintPh"))}"></textarea>`);
+    <button class="link small" id="hint-toggle">${t("hintToggle")}</button>
+    <textarea class="input" id="hint" rows="2" placeholder="${esc(t("hintPh"))}" hidden></textarea>
+    <div class="search-row">
+      <input class="input" id="q" type="search" placeholder="${esc(t("searchPh"))}" autocomplete="off" />
+      <button class="icon-btn big" data-src="barcode" aria-label="${esc(t("scanBarcode"))}">${IC.barcode}</button>
+    </div>
+    <div class="list-head small muted" id="list-head"></div>
+    <div id="food-list"></div>
+    <button class="btn btn-light" style="width:100%;margin-top:10px" id="create">${IC.pencil}${t("createOwn")}</button>`);
+  let results = [];
+  const q = $("#q", s);
+  const draw = () => {
+    results = searchFoods(q.value.trim());
+    $("#list-head", s).textContent = q.value.trim() ? t("results") : results.length ? t("recent") : "";
+    $("#food-list", s).innerHTML = results.length ? results.map(foodRow).join("") : q.value.trim() ? `<div class="empty small">${t("noResults")}</div>` : "";
+  };
+  draw();
+  q.addEventListener("input", draw);
   s.addEventListener("click", (ev) => {
     if (ev.target.closest("[data-close]")) return closeSheet();
+    if (ev.target.closest("#hint-toggle")) { $("#hint", s).hidden = false; ev.target.closest("#hint-toggle").hidden = true; return $("#hint", s).focus(); }
+    if (ev.target.closest("#create")) return openResult(newDraft({ name: q.value.trim() }));
+    const fr = ev.target.closest("[data-food]");
+    if (fr) {
+      const f = results[+fr.dataset.food];
+      return openResult(newDraft({ name: f.name, nameEn: f.nameEn, kcal: f.kcal, protein: f.protein, carb: f.carb, fat: f.fat,
+        low: f.low || 0, high: f.high || 0, items: f.items || [], photo: f.photo || null, note: f.unit ? `${t("perServing")} ${settings.lang === "en" ? UNIT_EN[f.unit] || f.unit : f.unit}` : "" }));
+    }
     const b = ev.target.closest("[data-src]"); if (!b) return;
     pendingHint = $("#hint", s).value.trim();
+    if (b.dataset.src === "barcode") return openScanSheet();
+    if (!aiKey()) return toast(t("needAiKey"));
     if (b.dataset.src === "text") return openTextSheet(pendingHint);
-    if (!settings.apiKey) return toast(t("needKey"));
-    $(b.dataset.src === "camera" ? "#file-camera" : "#file-gallery").click();
+    pendingMode = b.dataset.src === "label" ? "label" : "meal";
+    $(b.dataset.src === "gallery" ? "#file-gallery" : "#file-camera").click();
   });
+}
+
+let stopScan = null;
+function openScanSheet() {
+  const s = openSheet(`
+    <div class="sheet-head"><h2>${t("scanTitle")}</h2><button class="icon-btn" data-close>${IC.close}</button></div>
+    <div class="scan-box"><video id="cam" playsinline muted></video><div class="scan-line"></div></div>
+    <p class="small muted" id="scan-msg" style="text-align:center">${t("scanHelp")}</p>
+    <div class="search-row"><input class="input" id="code" inputmode="numeric" placeholder="${esc(t("enterCode"))}" /><button class="btn btn-dark btn-sm" id="look">${t("lookup")}</button></div>`,
+    { onClose: () => { stopScan?.(); stopScan = null; } });
+  $("[data-close]", s).onclick = closeSheet;
+  const go = (code) => { stopScan?.(); stopScan = null; lookup(code); };
+  $("#look", s).onclick = () => { const c = $("#code", s).value.replace(/\D/g, ""); if (c.length >= 6) go(c); else $("#code", s).focus(); };
+  if (navigator.mediaDevices?.getUserMedia) {
+    startScanner($("#cam", s), (code) => { if (navigator.vibrate) navigator.vibrate(60); go(code); },
+      () => { const m = $("#scan-msg"); if (m) m.textContent = t("camError"); }).then((stop) => {
+      if (!document.body.contains(s)) stop(); else stopScan = stop;
+    });
+  } else $("#scan-msg", s).textContent = t("camError");
+}
+
+async function lookup(code) {
+  openSheet(`<div class="loading"><div class="spinner"></div><div><b>${t("looking")}</b><div class="small muted num">${esc(code)}</div></div></div>`);
+  try {
+    const p = await lookupProduct(code);
+    if (!p) { closeSheet(); return toast(t("notFound")); }
+    if (!p.hasNutrition) { closeSheet(); return toast(t("noNutrition")); }
+    openResult(newDraft({ name: p.name, nameEn: p.nameEn, kcal: p.kcal, protein: p.protein, carb: p.carb, fat: p.fat,
+      note: `${t("perServing")} ${p.basis}${p.packageQty ? ` (${p.packageQty})` : ""} · ${t("fromOff")}`, barcode: code }));
+  } catch (e) {
+    closeSheet(); toast(t("errorPrefix") + e.message);
+  }
 }
 
 function openTextSheet(prefill = "") {
@@ -487,7 +629,7 @@ function openTextSheet(prefill = "") {
   $("[data-close]", s).onclick = closeSheet;
   $("#go", s).onclick = () => {
     const text = ta.value.trim(); if (!text) return ta.focus();
-    if (!settings.apiKey) return toast(t("needKey"));
+    if (!aiKey()) return toast(t("needAiKey"));
     runAnalysis({ text });
   };
 }
@@ -498,7 +640,7 @@ async function onPhotoPicked(file) {
     const img = await loadImage(file);
     const big = drawScaled(img, 1280, 0.85);
     const thumb = drawScaled(img, 360, 0.72);
-    runAnalysis({ imageB64: big.split(",")[1], photo: thumb, preview: big, text: pendingHint });
+    runAnalysis({ imageB64: big.split(",")[1], photo: thumb, preview: big, text: pendingHint, mode: pendingMode });
   } catch (e) {
     toast(t("errorPrefix") + e.message);
   }
@@ -521,7 +663,7 @@ function drawScaled(img, max, q) {
 }
 
 let analysisSeq = 0;
-async function runAnalysis({ imageB64 = null, photo = null, preview = null, text = "", correction = null, previous = null, base = null }) {
+async function runAnalysis({ imageB64 = null, photo = null, preview = null, text = "", correction = null, previous = null, base = null, mode = "meal" }) {
   const seq = ++analysisSeq;
   const shown = preview || photo || base?.photo;
   openSheet(`
@@ -530,7 +672,7 @@ async function runAnalysis({ imageB64 = null, photo = null, preview = null, text
     { full: !!shown, onClose: () => { analysisSeq++; } });
   $("[data-close]").onclick = closeSheet;
   try {
-    const r = await analyzeMeal({ apiKey: settings.apiKey, imageB64, text, correction, previous, lang: settings.lang });
+    const r = await analyzeMeal({ provider: settings.provider, apiKey: aiKey(), imageB64, text, correction, previous, lang: settings.lang, mode });
     if (seq !== analysisSeq) return; // user closed the sheet
     if (!r.is_food) { closeSheet(); return toast(t("notFood")); }
     const now = new Date();
@@ -539,7 +681,7 @@ async function runAnalysis({ imageB64 = null, photo = null, preview = null, text
     const draft = {
       id: base?.id ?? null, date, time, meal: base?.meal ?? mealForTime(time),
       servings: base?.servings ?? 1, photo: photo ?? base?.photo ?? null,
-      ...fromAi(r), ai: r, imageB64: imageB64 ?? base?.imageB64 ?? null, text: text || base?.text || "",
+      ...fromAi(r), ai: r, imageB64: imageB64 ?? base?.imageB64 ?? null, text: text || base?.text || "", mode,
     };
     openResult(draft, preview);
   } catch (e) {
@@ -573,7 +715,7 @@ function openResult(draft, preview = null) {
         <select class="meal-sel" id="meal">${MEALS.map((m) => `<option value="${m}" ${m === d.meal ? "selected" : ""}>${mealLabel(m)}</option>`).join("")}</select>
         <div class="stepper"><button id="minus" aria-label="-">−</button><span id="serv" class="num">${d.servings}</span><button id="plus" aria-label="+">+</button></div>
       </div>
-      <input class="dish-name" id="name" value="${esc(d.name)}" />
+      <input class="dish-name" id="name" value="${esc(d.name)}" placeholder="${esc(t("newFood"))}" />
       <input class="dish-en" id="nameEn" value="${esc(d.nameEn || "")}" placeholder="English name" />
       <div class="kcal-big num"><span id="kbig"></span> <small>${t("kcal")}</small></div>
       <div class="range num" id="range"></div>
@@ -604,11 +746,13 @@ function openResult(draft, preview = null) {
     $("#serv", s).textContent = d.servings;
     $("#kbig", s).textContent = fmt(d.kcal * d.servings);
     $("#range", s).textContent = d.low && d.high ? `${t("maybe")} ${fmt(d.low * d.servings)}–${fmt(d.high * d.servings)} ${t("kcal")}` : "";
-    s.querySelectorAll("[data-k]").forEach((inp) => { if (document.activeElement !== inp) inp.value = fmt(d[inp.dataset.k] * d.servings).replace(/,/g, ""); });
+    s.querySelectorAll("[data-k]").forEach((inp) => { if (document.activeElement !== inp) inp.value = fmt(d[inp.dataset.k] * d.servings).replace(/,/g, ""); fit(inp); });
   };
   refresh();
 
+  function fit(inp) { inp.style.width = Math.max(2, inp.value.length + 0.6) + "ch"; }
   s.querySelectorAll("[data-k]").forEach((inp) => inp.addEventListener("input", () => {
+    fit(inp);
     const k = inp.dataset.k, v = Number(inp.value) || 0;
     const prev = d[k]; d[k] = v / d.servings;
     if (k === "kcal" && prev) { d.low = d.low * d[k] / prev; d.high = d.high * d[k] / prev; }
@@ -619,6 +763,7 @@ function openResult(draft, preview = null) {
   $("#plus", s).onclick = () => { d.servings = Math.min(20, d.servings + 0.5); refresh(); };
   $("[data-close]", s).onclick = closeSheet;
   $("#save", s).onclick = () => {
+    if (!$("#name", s).value.trim()) { toast(t("needName")); return $("#name", s).focus(); }
     Object.assign(d, {
       meal: $("#meal", s).value, name: $("#name", s).value.trim() || d.name, nameEn: $("#nameEn", s).value.trim(),
       date: $("#date", s).value || d.date, time: $("#time", s).value || d.time,
@@ -655,8 +800,8 @@ function openFixSheet(d) {
   $("[data-close]", s).onclick = goBack; $("#cancel", s).onclick = goBack;
   $("#go", s).onclick = () => {
     const c = ta.value.trim(); if (!c) return ta.focus();
-    if (!settings.apiKey) return toast(t("needKey"));
-    runAnalysis({ imageB64: back.imageB64 || null, text: back.text, correction: c, previous: back.ai, base: back });
+    if (!aiKey()) return toast(t("needAiKey"));
+    runAnalysis({ imageB64: back.imageB64 || null, text: back.text, correction: c, previous: back.ai, base: back, mode: back.mode || "meal" });
   };
 }
 
@@ -699,6 +844,8 @@ $("#view").addEventListener("click", (e) => {
   if (e.target.closest("#btn-weight")) return openWeightSheet();
   const lang = e.target.closest("[data-lang]");
   if (lang) { readProfileForm(); settings.lang = lang.dataset.lang; saveSettings(); return render(); }
+  const prov = e.target.closest("[data-prov]");
+  if (prov) { readProfileForm(); settings.provider = prov.dataset.prov; saveSettings(); return render(); }
   const sex = e.target.closest("[data-sex]");
   if (sex) { readProfileForm(); settings.body.sex = sex.dataset.sex; saveSettings(); return render(); }
   if (e.target.closest("#btn-recalc")) {
@@ -722,7 +869,7 @@ $("#view").addEventListener("change", (e) => {
 });
 
 function exportData() {
-  const blob = new Blob([JSON.stringify({ app: "kindee", version: 1, exportedAt: new Date().toISOString(), settings: { ...settings, apiKey: "" }, entries, weights })], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ app: "kindee", version: 1, exportedAt: new Date().toISOString(), settings: { ...settings, apiKey: "", geminiKey: "" }, entries, weights })], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `kindee-backup-${ymd(new Date())}.json`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
@@ -732,7 +879,8 @@ $("#file-import").addEventListener("change", async (e) => {
     const data = JSON.parse(await f.text());
     if (data.app !== "kindee" || !Array.isArray(data.entries)) throw new Error();
     const key = settings.apiKey;
-    settings = { ...defaultSettings(), ...data.settings, apiKey: key };
+    const gk = settings.geminiKey;
+    settings = { ...defaultSettings(), ...data.settings, apiKey: key, geminiKey: gk };
     entries = data.entries; weights = data.weights || [];
     saveSettings(); saveEntries(); saveWeights(); render(); toast(t("imported"));
   } catch { toast(t("importFail")); }
