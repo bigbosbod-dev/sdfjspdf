@@ -1,6 +1,6 @@
 # กินดี (KinDee): personal calorie tracker
 
-A calorie-counting web app (PWA) for personal use. Take a photo of your food and Claude estimates calories, protein, carbs and fat. The UI works in Thai and English.
+A calorie-counting web app (PWA) for personal use. Search Thai dishes, scan barcodes, or snap a photo and let AI (free with Gemini) estimate calories, protein, carbs and fat. The UI works in Thai and English.
 
 ## Features (all usable for free)
 - **Thai food search**: a built-in list of about 250 common dishes and drinks (approximate values). Anything you've logged before also shows up in search and under "Recent".
