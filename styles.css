@@ -244,3 +244,73 @@ body.sheet-open .tabbar { display: none; }
 .scan-box { position: relative; aspect-ratio: 4 / 3; background: #111; border-radius: 18px; overflow: hidden; margin-bottom: 8px; }
 .scan-box video { width: 100%; height: 100%; object-fit: cover; }
 .scan-line { position: absolute; left: 12%; right: 12%; top: 50%; height: 2px; background: #ff5252; box-shadow: 0 0 10px #ff5252; }
+
+/* ============================== motion ============================== */
+.rise { animation: rise .55s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 55ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
+.pop { animation: pop .45s cubic-bezier(.3,1.5,.5,1) both; animation-delay: calc(120ms + var(--i, 0) * 70ms); }
+@keyframes pop { from { opacity: 0; transform: scale(.6); } }
+.bump { animation: bump .35s cubic-bezier(.3,1.6,.5,1); display: inline-block; }
+@keyframes bump { 40% { transform: scale(1.15); } }
+.fab.bump { display: grid; }
+.fab.bump svg { animation: spin90 .35s ease; }
+@keyframes spin90 { from { transform: rotate(-90deg); } }
+
+.arc { transition: stroke-dasharray 1.1s cubic-bezier(.2,.8,.2,1) .15s; }
+.arc-over { transition-delay: 1.1s; transition-duration: .6s; }
+.grow-x { animation: growx 1.1s cubic-bezier(.2,.8,.2,1) .2s both; transform-origin: left; }
+@keyframes growx { from { transform: scaleX(0); } }
+.draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.4s ease .2s forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+.dots { animation: fadein .4s ease 1.3s both; }
+@keyframes fadein { from { opacity: 0; } }
+.bar-up { transform-box: fill-box; transform-origin: bottom; animation: barup .7s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(.15s + var(--i) * 60ms); }
+@keyframes barup { from { transform: scaleY(0); } }
+
+.flicker { display: inline-block; transform-origin: 50% 90%; animation: flicker 1.6s ease-in-out infinite; }
+.flicker svg { display: block; }
+@keyframes flicker { 0%,100% { transform: scale(1) rotate(-2deg); } 30% { transform: scale(1.06,1.1) rotate(2deg); } 60% { transform: scale(.97,1.03) rotate(-1deg); } }
+
+/* press feedback */
+.btn, .tab, .fab, .day, .entry, .pick button, .icon-btn, .stepper button, .seg button, .setting-row { transition: transform .15s ease, background-color .2s ease, box-shadow .2s ease; }
+.btn:active, .fab:active, .pick button:active, .icon-btn:active, .stepper button:active { transform: scale(.94); }
+.entry:active, .day:active, .tab:active, .setting-row:active { transform: scale(.97); }
+.day b { transition: border-color .3s, transform .3s; }
+.day.sel b { transform: scale(1.08); }
+.tab svg { transition: transform .25s cubic-bezier(.3,1.6,.5,1); }
+.tab.on svg { transform: translateY(-1px) scale(1.08); }
+
+/* sheet closing */
+#sheet-root.closing .sheet { animation: down .22s ease-in forwards; }
+#sheet-root.closing .backdrop { animation: fadeout .22s ease-in forwards; }
+@keyframes down { to { transform: translateY(100%); } }
+@keyframes fadeout { to { opacity: 0; } }
+
+/* analyzing: scan line sweeping over the photo */
+.photo-wrap.scanning::after { content: ""; position: absolute; left: 0; right: 0; height: 90px; top: -90px;
+  background: linear-gradient(180deg, transparent, rgba(255,255,255,.08) 60%, rgba(255,255,255,.55) 98%, #fff);
+  animation: scan 1.8s cubic-bezier(.45,0,.55,1) infinite; }
+.photo-wrap.scanning img { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes scan { to { top: 100%; } }
+@keyframes breathe { 50% { transform: scale(1.04); filter: saturate(1.15); } }
+
+/* save celebration */
+.celebrate { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; pointer-events: none; }
+.celebrate .check { grid-area: 1 / 1; width: 92px; height: 92px; border-radius: 50%; background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.18); display: grid; place-items: center;
+  animation: checkpop 1.05s cubic-bezier(.3,1.5,.5,1) both; }
+.celebrate svg { width: 60px; height: 60px; fill: none; stroke: var(--ok); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.celebrate circle { stroke-dasharray: 151; stroke-dashoffset: 151; animation: dash .45s ease .1s forwards; }
+.celebrate path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: dash .3s ease .45s forwards; }
+@keyframes dash { to { stroke-dashoffset: 0; } }
+@keyframes checkpop { 0% { transform: scale(.4); opacity: 0; } 20% { transform: scale(1); opacity: 1; } 80% { transform: scale(1); opacity: 1; } 100% { transform: scale(.8); opacity: 0; } }
+.celebrate i { grid-area: 1 / 1; width: 9px; height: 9px; border-radius: 3px; background: var(--c);
+  animation: burst .9s cubic-bezier(.2,.8,.2,1) .15s both; }
+@keyframes burst { from { transform: rotate(var(--a)) translateY(0) scale(.4); opacity: 1; } to { transform: rotate(var(--a)) translateY(-120px) rotate(180deg) scale(1); opacity: 0; } }
+
+.toast.show { animation: toastin .35s cubic-bezier(.3,1.5,.5,1); }
+@keyframes toastin { from { transform: translate(-50%, 20px) scale(.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .draw { stroke-dashoffset: 0; }
+}

@@ -231,8 +231,8 @@ function ring(size, stroke, pct, color, inner = "", track = "#eeeeee", overColor
   return `<div class="ring" style="width:${size}px;height:${size}px">
     <svg width="${size}" height="${size}">
       <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${track}" stroke-width="${stroke}"/>
-      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${p * c} ${c}"/>
-      ${over ? `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${overColor}" stroke-width="${stroke}" stroke-dasharray="${overLen} ${c}"/>` : ""}
+      <circle class="arc" data-to="${p * c} ${c}" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="0 ${c}"/>
+      ${over ? `<circle class="arc arc-over" data-to="${overLen} ${c}" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${overColor}" stroke-width="${stroke}" stroke-dasharray="0 ${c}"/>` : ""}
     </svg><div class="ico">${inner}</div></div>`;
 }
 
@@ -245,6 +245,46 @@ function render() {
   const v = $("#view");
   v.innerHTML = state.tab === "home" ? viewHome() : state.tab === "progress" ? viewProgress() : viewProfile();
   window.scrollTo(0, 0);
+  animateIn(v);
+}
+
+/* ============================== animation ============================== */
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// Cards rise in one after another, rings fill, numbers count up.
+function animateIn(root) {
+  let i = 0;
+  root.querySelectorAll(":scope > *, .stack > *, .macros > *, .two > *, .meal-group .entry, #food-list .entry, .tags .tag").forEach((el) => {
+    if (el.classList.contains("stack") || el.classList.contains("macros") || el.classList.contains("two")) return;
+    el.classList.add("rise"); el.style.setProperty("--i", Math.min(i++, 14));
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    root.querySelectorAll(".arc").forEach((a) => a.setAttribute("stroke-dasharray", a.dataset.to));
+  }));
+  root.querySelectorAll("[data-count]").forEach((el) => countUp(el, Number(el.dataset.count), Number(el.dataset.dec || 0)));
+}
+
+function countUp(el, to, dec = 0, from = 0, ms = 900) {
+  const show = (v) => (el.textContent = dec ? fmt1(v) : fmt(v));
+  if (reduceMotion() || !isFinite(to)) return show(to);
+  const t0 = performance.now();
+  const step = (now) => {
+    const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    show(from + (to - from) * e);
+    if (k < 1 && el.isConnected) requestAnimationFrame(step);
+  };
+  show(from); requestAnimationFrame(step);
+}
+
+function bump(el) { if (!el) return; el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+function celebrate() {
+  const el = document.createElement("div");
+  el.className = "celebrate";
+  el.innerHTML = `<div class="check"><svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-16"/></svg></div>` +
+    Array.from({ length: 14 }, (_, i) => `<i style="--a:${(i / 14) * 360}deg;--c:${["#e5484d", "#2f9e5b", "#1e88e5", "#f5a623"][i % 4]}"></i>`).join("");
+  document.body.appendChild(el);
+  if (navigator.vibrate) navigator.vibrate(30);
+  setTimeout(() => el.remove(), 1100);
 }
 
 function viewHome() {
@@ -261,7 +301,7 @@ function viewHome() {
   const macro = (key, color, icon) => {
     const rem = g[key] - tot[key], over = rem < 0;
     return `<div class="card macro ${over ? "over" : ""}">
-      <div><div class="v num">${fmt(Math.abs(rem))}${t("g")}</div><div class="l">${t(key + (over ? "Over" : "Left"))}</div></div>
+      <div><div class="v num"><span data-count="${Math.round(Math.abs(rem))}">${fmt(Math.abs(rem))}</span>${t("g")}</div><div class="l">${t(key + (over ? "Over" : "Left"))}</div></div>
       ${ring(68, 6, g[key] ? tot[key] / g[key] : 0, color, icon(color), "#eeeeee", "#c62828")}
     </div>`;
   };
@@ -271,12 +311,12 @@ function viewHome() {
   return `
   <div class="top">
     <div class="brand">${IC.logo}<span>${t("appName")}</span></div>
-    <div class="streak-pill">${IC.flame("#f57c00", 16)}<span class="num">${streak()}</span></div>
+    <div class="streak-pill"><span class="flicker">${IC.flame("#f57c00", 16)}</span><span class="num">${streak()}</span></div>
   </div>
   <div class="days">${days.join("")}</div>
   <div class="stack">
     <div class="card hero">
-      <div><div class="big num ${left < 0 ? "over" : ""}">${fmt(Math.abs(left))}</div><div class="lbl">${left < 0 ? t("kcalOver") : t("kcalLeft")}</div>
+      <div><div class="big num ${left < 0 ? "over" : ""}" data-count="${Math.round(Math.abs(left))}">${fmt(Math.abs(left))}</div><div class="lbl">${left < 0 ? t("kcalOver") : t("kcalLeft")}</div>
         <div class="lbl num">${fmt(tot.kcal)} / ${fmt(g.kcal)} ${t("kcal")}</div></div>
       ${ring(120, 11, g.kcal ? tot.kcal / g.kcal : 0, "#2a2a2c", IC.flame("#2a2a2c", 26), "#eeeeee", "#c62828")}
     </div>
@@ -341,13 +381,13 @@ function viewProgress() {
   <div class="h1">${t("progressTitle")}</div>
   <div class="stack">
     <div class="two">
-      <div class="card stat"><div class="flame-big">${IC.flame("#f57c00", 64)}</div><div class="big num">${streak()}</div><div class="lbl">${t("streak")}</div></div>
-      <div class="card stat"><div class="flame-big" style="display:grid;place-items:center">${ring(60, 7, Math.min(1, loggedDays / 30), "#2a2a2c")}</div><div class="big num">${loggedDays}</div><div class="lbl">${t("daysLogged")}</div></div>
+      <div class="card stat"><div class="flame-big flicker">${IC.flame("#f57c00", 64)}</div><div class="big num" data-count="${streak()}">${streak()}</div><div class="lbl">${t("streak")}</div></div>
+      <div class="card stat"><div class="flame-big" style="display:grid;place-items:center">${ring(60, 7, Math.min(1, loggedDays / 30), "#2a2a2c")}</div><div class="big num" data-count="${loggedDays}">${loggedDays}</div><div class="lbl">${t("daysLogged")}</div></div>
     </div>
     <div class="card weight-card">
-      <div class="row"><div><div class="small muted">${t("currentWeight")}</div><div class="big num">${fmt1(curW)} ${t("kg")}</div></div>
+      <div class="row"><div><div class="small muted">${t("currentWeight")}</div><div class="big num"><span data-count="${curW}" data-dec="1">${fmt1(curW)}</span> ${t("kg")}</div></div>
         <button class="btn btn-dark btn-sm" id="btn-weight">${t("logWeight")} ${IC.arrow}</button></div>
-      <div class="bar"><div style="width:${pct * 100}%"></div></div>
+      <div class="bar"><div class="grow-x" style="width:${pct * 100}%"></div></div>
       <div class="meta num"><span>${t("start")} ${fmt1(startW)} ${t("kg")}</span><span>${t("goal")} ${fmt1(goalW)} ${t("kg")}</span></div>
       ${etaTxt ? `<div class="eta">${etaTxt}</div>` : ""}
     </div>
@@ -381,7 +421,7 @@ function weightChart(pts, goal) {
   const dots = data.map((p) => `<circle cx="${x(p.date)}" cy="${y(p.kg)}" r="3" fill="#2a2a2c"/>`).join("");
   const idx = [0, Math.floor((data.length - 1) / 2), data.length - 1].filter((v, i, a) => a.indexOf(v) === i);
   const labels = idx.map((i, j) => `<text x="${x(data[i].date)}" y="${H - 6}" text-anchor="${j === 0 ? "start" : j === idx.length - 1 && idx.length > 1 ? "end" : "middle"}">${shortDate(data[i].date)}</text>`).join("");
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${grid}${goalLine}<path d="${path}" fill="none" stroke="#2a2a2c" stroke-width="2" stroke-linejoin="round"/>${dots}${labels}</svg>`;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${grid}${goalLine}<path class="draw" pathLength="1" d="${path}" fill="none" stroke="#2a2a2c" stroke-width="2" stroke-linejoin="round"/><g class="dots">${dots}</g>${labels}</svg>`;
 }
 
 function kcalBars(bars) {
@@ -392,7 +432,7 @@ function kcalBars(bars) {
   let s = `<line x1="6" x2="${W - 6}" y1="${y(goal)}" y2="${y(goal)}" stroke="#bbb" stroke-dasharray="4 4"/>`;
   bars.forEach(([d, k], i) => {
     const x = 10 + i * bw + bw * 0.2, w = bw * 0.6, h = Math.max(k ? 3 : 0, H - B - y(k));
-    s += `<rect x="${x}" y="${H - B - h}" width="${w}" height="${h}" rx="6" fill="${k > goal ? "#c62828" : "#2a2a2c"}"/>`;
+    s += `<rect class="bar-up" style="--i:${i}" x="${x}" y="${H - B - h}" width="${w}" height="${h}" rx="6" fill="${k > goal ? "#c62828" : "#2a2a2c"}"/>`;
     s += `<text x="${x + w / 2}" y="${H - 8}" text-anchor="middle">${dow(parseYmd(d))}</text>`;
   });
   return `<svg class="chart" viewBox="0 0 ${W} ${H}">${s}</svg>`;
@@ -474,8 +514,9 @@ function readProfileForm() {
 }
 
 /* ============================== sheets ============================== */
+let sheetToken = 0;
 function openSheet(html, { full = false, onClose } = {}) {
-  closeSheet();
+  clearSheet();
   const root = $("#sheet-root");
   root.innerHTML = `<div class="backdrop"></div><div class="sheet ${full ? "full" : ""}">${full ? "" : '<div class="grab"></div>'}${html}</div>`;
   document.body.classList.add("sheet-open");
@@ -483,11 +524,21 @@ function openSheet(html, { full = false, onClose } = {}) {
   $(".backdrop", root).addEventListener("click", closeSheet);
   return $(".sheet", root);
 }
-function closeSheet() {
+function clearSheet() {
   const root = $("#sheet-root");
+  sheetToken++;
   if (!root.innerHTML) return;
   root._onClose?.(); root._onClose = null;
-  root.innerHTML = ""; document.body.classList.remove("sheet-open");
+  root.innerHTML = ""; root.classList.remove("closing"); document.body.classList.remove("sheet-open");
+}
+function closeSheet() {
+  const root = $("#sheet-root");
+  if (!root.innerHTML || root.classList.contains("closing")) return;
+  root._onClose?.(); root._onClose = null;
+  if (reduceMotion()) return clearSheet();
+  const tok = ++sheetToken;
+  root.classList.add("closing");
+  setTimeout(() => { if (tok === sheetToken) clearSheet(); }, 220);
 }
 
 let pendingHint = "";
@@ -566,6 +617,7 @@ function openAddSheet() {
     $("#food-list", s).innerHTML = results.length ? results.map(foodRow).join("") : q.value.trim() ? `<div class="empty small">${t("noResults")}</div>` : "";
   };
   draw();
+  animateIn($("#food-list", s));
   q.addEventListener("input", draw);
   s.addEventListener("click", (ev) => {
     if (ev.target.closest("[data-close]")) return closeSheet();
@@ -667,7 +719,7 @@ async function runAnalysis({ imageB64 = null, photo = null, preview = null, text
   const seq = ++analysisSeq;
   const shown = preview || photo || base?.photo;
   openSheet(`
-    ${shown ? `<div class="photo-wrap"><img src="${shown}" alt=""><button class="icon-btn close" data-close>${IC.close}</button></div>` : `<div class="sheet-head"><h2></h2><button class="icon-btn" data-close>${IC.close}</button></div>`}
+    ${shown ? `<div class="photo-wrap scanning"><img src="${shown}" alt=""><button class="icon-btn close" data-close>${IC.close}</button></div>` : `<div class="sheet-head"><h2></h2><button class="icon-btn" data-close>${IC.close}</button></div>`}
     <div class="loading"><div class="spinner"></div><div><b>${t("analyzing")}</b><div class="small muted"><span id="elapsed" class="num">0</span> ${settings.lang === "en" ? "s" : "วินาที"}</div><div class="small muted" id="ai-model"></div></div></div>`,
     { full: !!shown, onClose: () => { analysisSeq++; } });
   $("[data-close]").onclick = closeSheet;
@@ -755,6 +807,8 @@ function openResult(draft, preview = null) {
     s.querySelectorAll("[data-k]").forEach((inp) => { if (document.activeElement !== inp) inp.value = fmt(d[inp.dataset.k] * d.servings).replace(/,/g, ""); fit(inp); });
   };
   refresh();
+  s.querySelectorAll(".tags .tag, .items .chip, .tile").forEach((el, i) => { el.classList.add("pop"); el.style.setProperty("--i", i); });
+  countUp($("#kbig", s), Math.round(d.kcal * d.servings));
 
   function fit(inp) { inp.style.width = Math.max(2, inp.value.length + 0.6) + "ch"; }
   s.querySelectorAll("[data-k]").forEach((inp) => inp.addEventListener("input", () => {
@@ -765,8 +819,8 @@ function openResult(draft, preview = null) {
     $("#kbig", s).textContent = fmt(d.kcal * d.servings);
     $("#range", s).textContent = d.low && d.high ? `${t("maybe")} ${fmt(d.low * d.servings)}–${fmt(d.high * d.servings)} ${t("kcal")}` : "";
   }));
-  $("#minus", s).onclick = () => { d.servings = Math.max(0.5, d.servings - 0.5); refresh(); };
-  $("#plus", s).onclick = () => { d.servings = Math.min(20, d.servings + 0.5); refresh(); };
+  $("#minus", s).onclick = () => { d.servings = Math.max(0.5, d.servings - 0.5); refresh(); bump($("#kbig", s)); bump($("#serv", s)); };
+  $("#plus", s).onclick = () => { d.servings = Math.min(20, d.servings + 0.5); refresh(); bump($("#kbig", s)); bump($("#serv", s)); };
   $("[data-close]", s).onclick = closeSheet;
   $("#save", s).onclick = () => {
     if (!$("#name", s).value.trim()) { toast(t("needName")); return $("#name", s).focus(); }
@@ -786,7 +840,7 @@ function openResult(draft, preview = null) {
       if (!saveEntries()) return;
     }
     state.date = rec.date; state.tab = "home";
-    closeSheet(); render(); toast(t("saved"));
+    closeSheet(); render(); celebrate();
   };
   $("#fix", s).onclick = () => openFixSheet(d);
   if (editing) $("#del", s).onclick = () => {
@@ -838,7 +892,7 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
   if (state.tab === "profile") { readProfileForm(); saveSettings(); }
   state.tab = b.dataset.tab; render();
 });
-$("#fab").addEventListener("click", openAddSheet);
+$("#fab").addEventListener("click", () => { bump($("#fab")); openAddSheet(); });
 $("#file-camera").addEventListener("change", (e) => { onPhotoPicked(e.target.files[0]); e.target.value = ""; });
 $("#file-gallery").addEventListener("change", (e) => { onPhotoPicked(e.target.files[0]); e.target.value = ""; });
 
