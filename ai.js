@@ -64,23 +64,42 @@ export async function analyzeMeal(opts) {
 const G_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const G_CACHE = "kd_gemini_model";
 
+const G_LIST = "kd_gemini_models";
+const PER_MODEL_MS = 25000;   // give up on one model after this and try the next
+const TOTAL_MS = 70000;       // give up completely after this
+
+async function fetchT(url, opts = {}, ms = 15000) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 // Find Flash models this key can use: the "latest" alias first, then newest stable, then previews, Lite last.
+// The list is cached for a day so we don't pay for the lookup on every photo.
 async function geminiCandidates(key) {
   const fallback = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
   let names = [];
   try {
-    const r = await fetch(`${G_BASE}/models?pageSize=1000&key=${encodeURIComponent(key)}`);
-    if (r.status === 400 || r.status === 401 || r.status === 403) {
-      const j = await r.json().catch(() => ({}));
-      throw Object.assign(new Error(j.error?.message || "invalid key"), { status: r.status });
+    const c = JSON.parse(localStorage.getItem(G_LIST) || "null");
+    if (c && c.k === key.slice(-6) && Date.now() - c.t < 86400000) names = c.names;
+  } catch {}
+  if (!names.length) {
+    try {
+      const r = await fetchT(`${G_BASE}/models?pageSize=1000&key=${encodeURIComponent(key)}`, {}, 8000);
+      if (r.status === 400 || r.status === 401 || r.status === 403) {
+        const j = await r.json().catch(() => ({}));
+        throw Object.assign(new Error(j.error?.message || "invalid key"), { status: r.status });
+      }
+      const j = await r.json();
+      names = (j.models || [])
+        .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+        .map((m) => m.name.replace(/^models\//, ""))
+        .filter((n) => /^gemini-.*flash/.test(n) && !/(image|tts|audio|live|thinking|embedding|native|computer)/.test(n));
+      if (names.length) try { localStorage.setItem(G_LIST, JSON.stringify({ k: key.slice(-6), t: Date.now(), names })); } catch {}
+    } catch (e) {
+      if (e.status) throw e;
     }
-    const j = await r.json();
-    names = (j.models || [])
-      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
-      .map((m) => m.name.replace(/^models\//, ""))
-      .filter((n) => /^gemini-.*flash/.test(n) && !/(image|tts|audio|live|thinking-exp|embedding|native)/.test(n));
-  } catch (e) {
-    if (e.status) throw e;
   }
   const ver = (n) => parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
   const score = (n) =>
@@ -88,41 +107,60 @@ async function geminiCandidates(key) {
   const list = (names.length ? names : fallback).sort((a, b) => score(b) - score(a));
   let cached = null; try { cached = localStorage.getItem(G_CACHE); } catch {}
   if (cached && list.includes(cached)) list.unshift(list.splice(list.indexOf(cached), 1)[0]);
-  return list.slice(0, 6);
+  return list.slice(0, 5);
 }
 
-async function gemini({ apiKey, imageB64, text, correction, previous, lang, mode }) {
+// Keep "thinking" short: this task doesn't need deep reasoning and it's the main source of delay.
+function thinkingFor(model) {
+  const v = parseFloat((model.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+  if (v && v < 3) return { thinkingBudget: 0 };
+  return { thinkingLevel: "low" };
+}
+
+async function gemini({ apiKey, imageB64, text, correction, previous, lang, mode, onStatus }) {
   const parts = [];
   if (imageB64) parts.push({ inline_data: { mime_type: "image/jpeg", data: imageB64 } });
   parts.push({ text: buildPrompt({ hasImage: !!imageB64, mode, text, correction, previous }) + "\n\n" + JSON_SHAPE });
-  const body = JSON.stringify({
+  const makeBody = (thinking) => JSON.stringify({
     systemInstruction: { parts: [{ text: SYSTEM.replace("{LANG}", lang === "en" ? "English" : "Thai") }] },
     contents: [{ role: "user", parts }],
-    generationConfig: { responseMimeType: "application/json" },
+    generationConfig: { responseMimeType: "application/json", ...(thinking ? { thinkingConfig: thinking } : {}) },
   });
 
+  const t0 = Date.now();
   let lastErr;
   for (const model of await geminiCandidates(apiKey)) {
-    let r;
-    try {
-      r = await fetch(`${G_BASE}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body,
-      });
-    } catch (e) { throw new Error(msg("network", lang)); }
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      lastErr = Object.assign(new Error(j.error?.message || `HTTP ${r.status}`), { status: r.status });
-      if (r.status === 400 && /api key/i.test(j.error?.message || "")) throw new Error(msg("key", lang));
-      if (r.status === 401 || r.status === 403) throw new Error(msg("key", lang));
-      if ([404, 429, 500, 503].includes(r.status)) continue; // try the next model (quota is per model)
-      throw new Error(j.error?.message || `HTTP ${r.status}`);
+    let thinking = thinkingFor(model);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const left = TOTAL_MS - (Date.now() - t0);
+      if (left < 3000) throw new Error(msg("timeout", lang));
+      onStatus?.(model);
+      let r;
+      try {
+        r = await fetchT(`${G_BASE}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: makeBody(thinking),
+        }, Math.min(PER_MODEL_MS, left));
+      } catch (e) {
+        if (e.name === "AbortError") { lastErr = Object.assign(new Error(msg("timeout", lang)), { timeout: true }); break; }
+        throw new Error(msg("network", lang));
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const m = j.error?.message || "";
+        lastErr = Object.assign(new Error(`${model}: ${m || "HTTP " + r.status}`), { status: r.status });
+        if (r.status === 400 && /thinking/i.test(m) && thinking) { thinking = null; continue; } // model doesn't take this setting
+        if (r.status === 400 && /api key/i.test(m)) throw new Error(msg("key", lang));
+        if (r.status === 401 || r.status === 403) throw new Error(msg("key", lang));
+        break; // 404 / 429 / 5xx / other: try the next model
+      }
+      if (j.promptFeedback?.blockReason) throw new Error(msg("refused", lang));
+      const txt = (j.candidates?.[0]?.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
+      if (!txt) { lastErr = new Error(`${model}: empty response`); break; }
+      try { localStorage.setItem(G_CACHE, model); } catch {}
+      return parseJson(txt);
     }
-    if (j.promptFeedback?.blockReason) throw new Error(msg("refused", lang));
-    const txt = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
-    if (!txt) { lastErr = new Error("empty response"); continue; }
-    try { localStorage.setItem(G_CACHE, model); } catch {}
-    return parseJson(txt);
   }
+  if (lastErr?.timeout) throw new Error(msg("timeout", lang));
   if (lastErr?.status === 429) throw new Error(msg("quota", lang));
   if (lastErr?.status >= 500) throw new Error(msg("server", lang));
   throw lastErr || new Error("no model available");
@@ -199,6 +237,7 @@ const MSG = {
   server: ["เซิร์ฟเวอร์ AI มีปัญหา ลองใหม่อีกครั้ง", "AI server error, try again"],
   network: ["เชื่อมต่อไม่ได้ ตรวจสอบอินเทอร์เน็ต", "Network error, check your connection"],
   refused: ["AI ไม่ตอบคำขอนี้ ลองรูปอื่นดูนะ", "The request was declined. Try another photo."],
+  timeout: ["AI ตอบช้าเกินไป ลองใหม่อีกครั้ง หรือค้นหาเมนูแทน", "AI took too long. Try again or search the food list."],
   cut: ["คำตอบถูกตัด ลองใหม่อีกครั้ง", "Response was cut off. Please try again."],
 };
 const msg = (k, lang) => MSG[k][lang === "en" ? 1 : 0];

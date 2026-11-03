@@ -638,7 +638,7 @@ async function onPhotoPicked(file) {
   if (!file) return;
   try {
     const img = await loadImage(file);
-    const big = drawScaled(img, 1280, 0.85);
+    const big = drawScaled(img, 1024, 0.8);
     const thumb = drawScaled(img, 360, 0.72);
     runAnalysis({ imageB64: big.split(",")[1], photo: thumb, preview: big, text: pendingHint, mode: pendingMode });
   } catch (e) {
@@ -668,11 +668,17 @@ async function runAnalysis({ imageB64 = null, photo = null, preview = null, text
   const shown = preview || photo || base?.photo;
   openSheet(`
     ${shown ? `<div class="photo-wrap"><img src="${shown}" alt=""><button class="icon-btn close" data-close>${IC.close}</button></div>` : `<div class="sheet-head"><h2></h2><button class="icon-btn" data-close>${IC.close}</button></div>`}
-    <div class="loading"><div class="spinner"></div><div><b>${t("analyzing")}</b><div class="small muted">${t("analyzingSub")}</div></div></div>`,
+    <div class="loading"><div class="spinner"></div><div><b>${t("analyzing")}</b><div class="small muted"><span id="elapsed" class="num">0</span> ${settings.lang === "en" ? "s" : "วินาที"}</div><div class="small muted" id="ai-model"></div></div></div>`,
     { full: !!shown, onClose: () => { analysisSeq++; } });
   $("[data-close]").onclick = closeSheet;
   try {
-    const r = await analyzeMeal({ provider: settings.provider, apiKey: aiKey(), imageB64, text, correction, previous, lang: settings.lang, mode });
+    const t0 = Date.now();
+    const tick = setInterval(() => { const el = $("#elapsed"); if (el && seq === analysisSeq) el.textContent = Math.floor((Date.now() - t0) / 1000); else clearInterval(tick); }, 1000);
+    let r;
+    try {
+      r = await analyzeMeal({ provider: settings.provider, apiKey: aiKey(), imageB64, text, correction, previous, lang: settings.lang, mode,
+        onStatus: (m) => { const el = $("#ai-model"); if (el) el.textContent = m; } });
+    } finally { clearInterval(tick); }
     if (seq !== analysisSeq) return; // user closed the sheet
     if (!r.is_food) { closeSheet(); return toast(t("notFood")); }
     const now = new Date();

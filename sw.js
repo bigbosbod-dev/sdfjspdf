@@ -1,5 +1,5 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = "kindee-v2";
+const VERSION = "kindee-v3";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "ai.js", "foods.js", "barcode.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-180.png", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
